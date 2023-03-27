@@ -1,8 +1,13 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const path = require("path");
+const fs = require("fs/promises");
+const Jimp = require("jimp");
+const gravatar = require("gravatar");
 
 const { RequestError } = require("../helpers");
 const User = require("../models/user");
+const avatarsDir = path.join(__dirname, "../", "public", "avatars");
 
 const { TOKEN_KEY } = process.env;
 
@@ -13,10 +18,16 @@ const register = async (req, res, next) => {
     throw RequestError(409`Email: ${email} already in use`);
   }
   const hashedPassword = await bcrypt.hash(password, 10);
-  const user = await User.create({ email, password: hashedPassword });
+  const avatarURL = gravatar.url(email, { protocol: "https", s: "100" });
+  const user = await User.create({
+    email,
+    password: hashedPassword,
+    avatarURL,
+  });
   res.status(201).json({
     email: user.email,
     subscription: user.subscription,
+    avatarURL,
   });
 };
 
@@ -52,4 +63,24 @@ const current = async (req, res, next) => {
   });
 };
 
-module.exports = { register, login, logout, current };
+const avatars = async (req, res, next) => {
+  try {
+    const { _id: id } = req.user;
+    const { path: tempDir, originalname } = req.file;
+    const [extention] = originalname.split(".").reverse();
+    const avatarName = `${id}.${extention}`;
+    const resultUpload = path.join(avatarsDir, avatarName);
+    const image = await Jimp.read(`./temp/${originalname}`);
+    await image.resize(250, 250);
+    await image.writeAsync(`./temp/${originalname}`);
+    await fs.rename(tempDir, resultUpload);
+    const avatarURL = path.join("public", "avatars", avatarName);
+    await User.findByIdAndUpdate(id, { avatarURL });
+    res.status(201).json(avatarURL);
+  } catch (error) {
+    await fs.unlink(req.file.path);
+    next(error);
+  }
+};
+
+module.exports = { register, login, logout, current, avatars };
