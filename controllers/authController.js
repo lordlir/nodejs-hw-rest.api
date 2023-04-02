@@ -4,8 +4,9 @@ const path = require("path");
 const fs = require("fs/promises");
 const Jimp = require("jimp");
 const gravatar = require("gravatar");
+const { v4: uuidv4 } = require("uuid");
 
-const { RequestError } = require("../helpers");
+const { RequestError, sendEmail } = require("../helpers");
 const User = require("../models/user");
 const avatarsDir = path.join(__dirname, "../", "public", "avatars");
 
@@ -19,11 +20,20 @@ const register = async (req, res, next) => {
   }
   const hashedPassword = await bcrypt.hash(password, 10);
   const avatarURL = gravatar.url(email, { protocol: "https", s: "100" });
+  const verificationToken = uuidv4();
+
   const user = await User.create({
     email,
     password: hashedPassword,
     avatarURL,
+    verificationToken,
   });
+  const letter = {
+    to: email,
+    subject: "Registration Confirmation",
+    html: `<a href="http://localhost:3000/api/auth/verify/${verificationToken}" target="_blank">Please follow the link to complete your registration</a>`,
+  };
+  await sendEmail(letter);
   res.status(201).json({
     email: user.email,
     subscription: user.subscription,
@@ -83,4 +93,45 @@ const avatars = async (req, res, next) => {
   }
 };
 
-module.exports = { register, login, logout, current, avatars };
+const verifyEmail = async (req, res) => {
+  const { verificationToken } = req.params;
+  const user = await User.findOne({ verificationToken });
+  if (!user) {
+    throw new Error(404, "Error! No such user!");
+  }
+  await User.findByIdAndUpdate(user._id, {
+    verify: true,
+    verificationToken: "",
+  });
+  res.json({ messsage: "Email verification completed" });
+};
+
+const resendVerification = async (req, res) => {
+  console.log("resend works");
+  const { email } = req.body;
+  const user = await User.findOne({ email });
+  if (!user) {
+    throw new Error(404, "Error! No such user!");
+  }
+  if (user.verify) {
+    throw new Error(400, "Error! User is already verified!");
+  }
+
+  const letter = {
+    to: email,
+    subject: "Registration Confirmation",
+    html: `<a href="http://localhost:3000/api/auth/verify/${user.verificationToken}" target="_blank">Please follow the link to complete your registration</a>`,
+  };
+  await sendEmail(letter);
+  res.json({ messsage: "Email verification letter has been resent" });
+};
+
+module.exports = {
+  register,
+  login,
+  logout,
+  current,
+  avatars,
+  verifyEmail,
+  resendVerification,
+};
